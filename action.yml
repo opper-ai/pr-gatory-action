@@ -1,5 +1,5 @@
 name: 'pr-gatory'
-description: 'A merge queue for GitHub Actions. PRs enter purgatory, only the worthy get merged. Label a PR, it rebases onto the base branch, waits for CI, and squash merges.'
+description: 'A merge queue for GitHub Actions. Label a PR, it rebases, waits for CI, and squash merges.'
 author: 'opper-ai'
 
 branding:
