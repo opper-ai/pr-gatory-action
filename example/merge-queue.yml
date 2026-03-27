@@ -1,0 +1,24 @@
+# .github/workflows/merge-queue.yml
+name: Merge Queue
+
+on:
+  pull_request:
+    types: [labeled]
+
+# Only one merge at a time — this IS the queue
+concurrency:
+  group: merge-queue
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    if: github.event.label.name == 'mergeme'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opper-ai/pr-gatory-action@main
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}

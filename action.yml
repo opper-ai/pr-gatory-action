@@ -1,0 +1,128 @@
+name: 'pr-gatory'
+description: 'A merge queue for GitHub Actions. PRs enter purgatory, only the worthy get merged.'
+
+inputs:
+  github-token:
+    description: 'GitHub token with repo permissions'
+    required: true
+    default: ${{ github.token }}
+  label:
+    description: 'Label that triggers the merge queue'
+    required: false
+    default: 'mergeme'
+  poll-interval:
+    description: 'Seconds between status check polls'
+    required: false
+    default: '30'
+  timeout:
+    description: 'Max seconds to wait for status checks'
+    required: false
+    default: '1800'
+
+outputs:
+  result:
+    description: 'merged, failed, or timeout'
+    value: ${{ steps.merge.outputs.result }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Rebase, wait for CI, squash merge
+      id: merge
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        LABEL: ${{ inputs.label }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        POLL_INTERVAL: ${{ inputs.poll-interval }}
+        TIMEOUT: ${{ inputs.timeout }}
+      run: |
+        set -euo pipefail
+        REPO="${GITHUB_REPOSITORY}"
+
+        dequeue() {
+          local msg="$1"
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label "$LABEL" || true
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$msg" || true
+          echo "result=failed" >> "$GITHUB_OUTPUT"
+          exit 0
+        }
+
+        # --- 1. Check PR state ---
+        echo "::group::PR #${PR_NUMBER} — checking state"
+
+        PR_INFO=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+          --json mergeable,headRefName,title,baseRefName \
+          --jq '"\(.mergeable)\t\(.headRefName)\t\(.title)\t\(.baseRefName)"')
+        MERGEABLE=$(echo "$PR_INFO" | cut -f1)
+        BRANCH=$(echo "$PR_INFO" | cut -f2)
+        TITLE=$(echo "$PR_INFO" | cut -f3)
+        BASE=$(echo "$PR_INFO" | cut -f4)
+
+        echo "PR: #${PR_NUMBER} — ${TITLE}"
+        echo "Branch: ${BRANCH} → ${BASE}"
+        echo "Mergeable: ${MERGEABLE}"
+        echo "::endgroup::"
+
+        if [[ "$MERGEABLE" == "CONFLICTING" ]]; then
+          dequeue "**Merge queue:** removed — PR has conflicts with \`${BASE}\`. Resolve and re-label \`${LABEL}\` to retry."
+        fi
+
+        # --- 2. Rebase onto latest base branch ---
+        echo "::group::Rebasing ${BRANCH} onto ${BASE}"
+
+        git fetch origin "$BASE" "$BRANCH"
+        git checkout "origin/$BRANCH"
+        git checkout -B "$BRANCH"
+
+        if ! git rebase "origin/$BASE"; then
+          git rebase --abort
+          echo "::endgroup::"
+          dequeue "**Merge queue:** rebase onto \`${BASE}\` failed due to conflicts. Resolve and re-label \`${LABEL}\` to retry."
+        fi
+
+        git push origin "$BRANCH" --force-with-lease
+        echo "Rebased ${BRANCH} onto latest ${BASE}"
+        echo "::endgroup::"
+
+        # --- 3. Wait for status checks ---
+        echo "::group::Waiting for status checks"
+
+        ELAPSED=0
+        while true; do
+          sleep "$POLL_INTERVAL"
+          ELAPSED=$((ELAPSED + POLL_INTERVAL))
+
+          CHECK_STATE=$(gh pr checks "$PR_NUMBER" --repo "$REPO" --json name,state \
+            --jq '[.[] | select(.name != "Merge Queue")] | if length == 0 then "no_checks" elif all(.state == "SUCCESS") then "pass" elif any(.state == "FAILURE") then "fail" else "pending" end')
+
+          echo "  ${ELAPSED}s — checks: ${CHECK_STATE}"
+
+          if [[ "$CHECK_STATE" == "pass" || "$CHECK_STATE" == "no_checks" ]]; then
+            echo "All checks passed."
+            break
+          fi
+
+          if [[ "$CHECK_STATE" == "fail" ]]; then
+            echo "::endgroup::"
+            dequeue "**Merge queue:** status checks failed after rebase onto \`${BASE}\`. Fix and re-label \`${LABEL}\` to retry."
+          fi
+
+          if [[ "$ELAPSED" -ge "$TIMEOUT" ]]; then
+            echo "::endgroup::"
+            dequeue "**Merge queue:** timed out waiting for status checks (${TIMEOUT}s). Re-label \`${LABEL}\` to retry."
+          fi
+        done
+        echo "::endgroup::"
+
+        # --- 4. Squash merge ---
+        echo "::group::Squash merging PR #${PR_NUMBER}"
+
+        if gh pr merge "$PR_NUMBER" --repo "$REPO" --squash --delete-branch; then
+          echo "::endgroup::"
+          echo "::notice::PR #${PR_NUMBER} squash merged into ${BASE}"
+          echo "result=merged" >> "$GITHUB_OUTPUT"
+        else
+          echo "::endgroup::"
+          dequeue "**Merge queue:** squash merge failed. This can happen if branch protection rules are not met. Fix and re-label \`${LABEL}\` to retry."
+        fi
