@@ -13,7 +13,7 @@ Label a PR with `mergeme` and pr-gatory takes over:
 3. **Squash merges** into the base branch and deletes the source branch
 4. **Dequeues** with a PR comment explaining what went wrong if anything fails
 
-Multiple PRs labeled at the same time? They queue up. Each one rebases onto the base branch *after* the previous one merges, so every PR is tested against the true current state of your codebase.
+Multiple PRs labeled at the same time? They all get processed. When a job starts, it scans for every open PR with the label and works through them in order — so even if several PRs are labeled while one is already being processed, they'll all be picked up by the time the queue drains.
 
 ## Quick start
 
@@ -37,6 +37,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      checks: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,12 +51,12 @@ That's it. Label a PR with `mergeme` to try it out.
 
 ## How the queue works
 
-The queue is powered by GitHub Actions' built-in [concurrency groups](https://docs.github.com/en/actions/using-jobs/using-concurrency). The `concurrency` block in the workflow ensures only one PR is processed at a time — additional runs wait in line rather than being cancelled.
+When triggered, the action scans for all open PRs carrying the label and processes them serially — oldest first. The `concurrency` block ensures only one job runs at a time, so a second trigger that arrives while the first job is busy will wait and then drain whatever remains in the queue when it starts.
 
 ```
-PR #1 labeled "mergeme"  ──>  rebase, CI, merge  ──>  done
-PR #2 labeled "mergeme"  ──>  waiting...          ──>  rebase, CI, merge  ──>  done
-PR #3 labeled "mergeme"  ──>  waiting...                waiting...         ──>  rebase, CI, merge
+PR #1 labeled  ─┐
+PR #2 labeled  ─┤──>  job picks up #1, #2, #3 in order  ──>  all merged
+PR #3 labeled  ─┘
 ```
 
 Each PR rebases onto the base branch at the moment it's processed, which includes all previously merged PRs. This is the key property of a merge queue — no PR merges without being tested against the current state of the target branch.
@@ -110,6 +111,7 @@ The default `GITHUB_TOKEN` works for repos without branch protection. If you hav
 
 - **Contents**: read and write (for rebase push)
 - **Pull requests**: read and write (for merge, labels, comments)
+- **Checks**: read (for polling CI status)
 
 ## Why not GitHub's built-in merge queue?
 
