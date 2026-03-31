@@ -39,6 +39,9 @@ jobs:
       pull-requests: write
       checks: read
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: opper-ai/pr-gatory-action@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
