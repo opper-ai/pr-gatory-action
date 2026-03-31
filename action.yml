@@ -47,8 +47,8 @@ runs:
         # Remove label, post failure comment, write output
         dequeue() {
           local pr="$1" msg="$2"
-          gh pr edit "$pr" --repo "$REPO" --remove-label "$LABEL" || true
-          gh pr comment "$pr" --repo "$REPO" --body "$msg" || true
+          gh api "repos/$REPO/issues/$pr/labels/$LABEL" -X DELETE 2>/dev/null || true
+          gh pr comment "$pr" --repo "$REPO" --body "$msg" 2>/dev/null || true
           echo "result=failed" >> "$GITHUB_OUTPUT"
         }
 
@@ -120,7 +120,7 @@ runs:
           # Push directly to token URL to ensure the PAT is used (not GITHUB_TOKEN
           # from checkout). PAT pushes trigger workflows; GITHUB_TOKEN pushes don't.
           local PUSH_URL="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
-          if ! git push "$PUSH_URL" "$BRANCH" --force-with-lease 2>&1; then
+          if ! git push "$PUSH_URL" "$BRANCH" --force 2>&1; then
             echo "::endgroup::"
             dequeue "$PR_NUMBER" "**Merge queue:** failed to push rebased branch. Re-label \`${LABEL}\` to retry."
             return 0
