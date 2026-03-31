@@ -180,6 +180,10 @@ runs:
         }
 
         # --- Queue loop: process all labeled PRs in order ---
+        # Brief pause to let the label propagate through GitHub's API
+        # (the labeled event can fire before gh pr list sees the label)
+        sleep 5
+        EMPTY_RETRIES=0
         while true; do
           PR_NUMBER=$(gh pr list --repo "$REPO" \
             --label "$LABEL" \
@@ -188,9 +192,16 @@ runs:
             --jq '[.[].number] | sort | first // empty')
 
           if [[ -z "$PR_NUMBER" ]]; then
+            if [[ "$EMPTY_RETRIES" -lt 3 ]]; then
+              EMPTY_RETRIES=$((EMPTY_RETRIES + 1))
+              echo "Queue appears empty, retrying in 5s... (${EMPTY_RETRIES}/3)"
+              sleep 5
+              continue
+            fi
             echo "Queue empty."
             break
           fi
+          EMPTY_RETRIES=0
 
           process_pr "$PR_NUMBER" || {
             # Unexpected failure — remove from queue to avoid infinite loop
