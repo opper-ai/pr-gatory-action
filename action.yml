@@ -122,9 +122,11 @@ runs:
             sleep "$POLL_INTERVAL"
             ELAPSED=$((ELAPSED + POLL_INTERVAL))
 
-            CHECK_STATE=$(gh pr checks "$PR_NUMBER" --repo "$REPO" --json name,state \
-              --jq '[.[] | select(.name | test("^Merge Queue") | not)] | if length == 0 then "no_checks" elif all(.state == "SUCCESS") then "pass" elif any(.state == "FAILURE") then "fail" else "pending" end' \
-              2>/dev/null) || CHECK_STATE="pending"
+            # gh pr checks exits 1 when no checks exist — fall back to empty array
+            local CHECK_RAW
+            CHECK_RAW=$(gh pr checks "$PR_NUMBER" --repo "$REPO" --json name,state 2>/dev/null) || CHECK_RAW="[]"
+            CHECK_STATE=$(echo "$CHECK_RAW" | jq -r \
+              '[.[] | select(.name | test("^Merge Queue") | not)] | if length == 0 then "no_checks" elif all(.state == "SUCCESS") then "pass" elif any(.state == "FAILURE") then "fail" else "pending" end')
 
             echo "  ${ELAPSED}s — checks: ${CHECK_STATE}"
 
