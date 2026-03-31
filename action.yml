@@ -102,12 +102,9 @@ runs:
           # --- 2. Rebase onto latest base branch ---
           echo "::group::Rebasing ${BRANCH} onto ${BASE}"
 
-          # Configure git with token for push authentication
-          # Clear checkout's credential helper so the PAT in the URL is used
-          git config --unset-all http.https://github.com/.extraheader || true
+          # Configure git identity for rebase commits
           git config user.email "pr-gatory[bot]@users.noreply.github.com"
           git config user.name "pr-gatory[bot]"
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
 
           git fetch origin "$BASE" "$BRANCH"
           git checkout "origin/$BRANCH"
@@ -120,7 +117,10 @@ runs:
             return 0
           fi
 
-          if ! git push origin "$BRANCH" --force-with-lease; then
+          # Push directly to token URL to ensure the PAT is used (not GITHUB_TOKEN
+          # from checkout). PAT pushes trigger workflows; GITHUB_TOKEN pushes don't.
+          local PUSH_URL="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          if ! git push "$PUSH_URL" "$BRANCH" --force-with-lease 2>&1; then
             echo "::endgroup::"
             dequeue "$PR_NUMBER" "**Merge queue:** failed to push rebased branch. Re-label \`${LABEL}\` to retry."
             return 0
