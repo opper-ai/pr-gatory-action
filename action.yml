@@ -52,10 +52,6 @@ runs:
           echo "result=failed" >> "$GITHUB_OUTPUT"
         }
 
-        # Configure git identity for rebase commits
-        git config user.email "pr-gatory[bot]@users.noreply.github.com"
-        git config user.name "pr-gatory[bot]"
-
         # Process one PR through rebase → CI wait → squash merge.
         # Always returns 0; failures dequeue the PR and return early.
         process_pr() {
@@ -103,23 +99,12 @@ runs:
             fi
           fi
 
-          # --- 2. Rebase onto latest base branch ---
+          # --- 2. Rebase onto latest base branch (server-side) ---
           echo "::group::Rebasing ${BRANCH} onto ${BASE}"
 
-          git fetch origin "$BASE" "$BRANCH"
-          git checkout "origin/$BRANCH"
-          git checkout -B "$BRANCH"
-
-          if ! git rebase "origin/$BASE"; then
-            git rebase --abort
+          if ! gh pr update-branch "$PR_NUMBER" --repo "$REPO" --rebase 2>&1; then
             echo "::endgroup::"
-            dequeue "$PR_NUMBER" "**Merge queue:** rebase onto \`${BASE}\` failed due to conflicts. Resolve and re-label \`${LABEL}\` to retry."
-            return 0
-          fi
-
-          if ! git push origin "$BRANCH" --force-with-lease; then
-            echo "::endgroup::"
-            dequeue "$PR_NUMBER" "**Merge queue:** failed to push rebased branch. Re-label \`${LABEL}\` to retry."
+            dequeue "$PR_NUMBER" "**Merge queue:** rebase onto \`${BASE}\` failed. Resolve any conflicts and re-label \`${LABEL}\` to retry."
             return 0
           fi
 
