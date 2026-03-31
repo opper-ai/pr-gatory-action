@@ -199,6 +199,7 @@ runs:
         # Brief pause to let the label propagate through GitHub's API
         # (the labeled event can fire before gh pr list sees the label)
         sleep 5
+        PROCESSED=""
         EMPTY_RETRIES=0
         while true; do
           PR_NUMBER=$(gh pr list --repo "$REPO" \
@@ -219,9 +220,17 @@ runs:
           fi
           EMPTY_RETRIES=0
 
+          # Skip PRs already processed (label removal may not have propagated)
+          if [[ " $PROCESSED " == *" $PR_NUMBER "* ]]; then
+            echo "PR #${PR_NUMBER} already processed, waiting for label removal to propagate..."
+            sleep 5
+            continue
+          fi
+
           process_pr "$PR_NUMBER" || {
             # Unexpected failure — remove from queue to avoid infinite loop
             gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label "$LABEL" || true
             echo "result=failed" >> "$GITHUB_OUTPUT"
           }
+          PROCESSED="$PROCESSED $PR_NUMBER"
         done
