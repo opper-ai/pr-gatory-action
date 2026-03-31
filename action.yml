@@ -111,7 +111,10 @@ runs:
           # --- 3. Wait for status checks ---
           echo "::group::Waiting for status checks on PR #${PR_NUMBER}"
 
-          local ELAPSED=0 CHECK_RESULT="pending" CHECK_STATE
+          local ELAPSED=0 CHECK_RESULT="pending" CHECK_STATE CHECKS_SEEN="false"
+          # Grace period: wait at least this long before treating "no checks" as
+          # a pass, giving CI workflows time to register check runs on the new commit.
+          local GRACE=60
           while true; do
             sleep "$POLL_INTERVAL"
             ELAPSED=$((ELAPSED + POLL_INTERVAL))
@@ -122,9 +125,17 @@ runs:
 
             echo "  ${ELAPSED}s — checks: ${CHECK_STATE}"
 
-            if [[ "$CHECK_STATE" == "pass" || "$CHECK_STATE" == "no_checks" ]]; then
+            [[ "$CHECK_STATE" != "no_checks" ]] && CHECKS_SEEN="true"
+
+            if [[ "$CHECK_STATE" == "pass" ]]; then
               CHECK_RESULT="pass"
               echo "All checks passed."
+              break
+            fi
+
+            if [[ "$CHECK_STATE" == "no_checks" && ( "$CHECKS_SEEN" == "true" || "$ELAPSED" -ge "$GRACE" ) ]]; then
+              CHECK_RESULT="pass"
+              echo "No status checks configured — proceeding."
               break
             fi
 
