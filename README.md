@@ -88,7 +88,7 @@ To retry, fix the issue and add the `mergeme` label again.
 
 | Output | Description |
 |--------|-------------|
-| `result` | `merged` or `failed` |
+| `result` | `merged` or `failed` — reflects the last PR processed in the queue |
 
 ## Custom label
 
@@ -112,6 +112,18 @@ The default `GITHUB_TOKEN` works for repos without branch protection. If you hav
 - **Contents**: read and write (for rebase push)
 - **Pull requests**: read and write (for merge, labels, comments)
 - **Checks**: read (for polling CI status)
+
+## Job timeout
+
+GitHub Actions jobs have a default timeout of 6 hours. If your queue is deep and CI is slow, the job may be cancelled mid-way. Increase the job timeout in your workflow if needed:
+
+```yaml
+jobs:
+  merge:
+    timeout-minutes: 720  # 12 hours
+```
+
+PRs that weren't reached before the timeout will keep their label and be picked up by the next trigger.
 
 ## Why not GitHub's built-in merge queue?
 

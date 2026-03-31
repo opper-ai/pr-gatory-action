@@ -26,7 +26,7 @@ inputs:
 
 outputs:
   result:
-    description: 'merged, failed, or timeout'
+    description: 'Result of the last PR processed: merged or failed'
     value: ${{ steps.merge.outputs.result }}
 
 runs:
@@ -60,15 +60,14 @@ runs:
           # --- 1. Check PR state ---
           echo "::group::PR #${PR_NUMBER} — checking state"
 
-          local PR_INFO STATE MERGEABLE BRANCH TITLE BASE
-          PR_INFO=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
-            --json state,mergeable,headRefName,title,baseRefName \
-            --jq '"\(.state)\t\(.mergeable)\t\(.headRefName)\t\(.title)\t\(.baseRefName)"')
-          STATE=$(echo "$PR_INFO" | cut -f1)
-          MERGEABLE=$(echo "$PR_INFO" | cut -f2)
-          BRANCH=$(echo "$PR_INFO" | cut -f3)
-          TITLE=$(echo "$PR_INFO" | cut -f4)
-          BASE=$(echo "$PR_INFO" | cut -f5)
+          local PR_JSON STATE MERGEABLE BRANCH TITLE BASE
+          PR_JSON=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json state,mergeable,headRefName,title,baseRefName)
+          STATE=$(echo "$PR_JSON" | jq -r '.state')
+          MERGEABLE=$(echo "$PR_JSON" | jq -r '.mergeable')
+          BRANCH=$(echo "$PR_JSON" | jq -r '.headRefName')
+          TITLE=$(echo "$PR_JSON" | jq -r '.title')
+          BASE=$(echo "$PR_JSON" | jq -r '.baseRefName')
 
           echo "PR: #${PR_NUMBER} — ${TITLE}"
           echo "Branch: ${BRANCH} → ${BASE}"
@@ -83,6 +82,21 @@ runs:
           if [[ "$MERGEABLE" == "CONFLICTING" ]]; then
             dequeue "$PR_NUMBER" "**Merge queue:** removed — PR has conflicts with \`${BASE}\`. Resolve and re-label \`${LABEL}\` to retry."
             return 0
+          fi
+
+          # GitHub computes mergeability asynchronously — poll briefly if UNKNOWN
+          if [[ "$MERGEABLE" == "UNKNOWN" ]]; then
+            local i
+            for i in 1 2 3; do
+              sleep 5
+              MERGEABLE=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json mergeable --jq '.mergeable')
+              echo "  Mergeability retry ${i}: ${MERGEABLE}"
+              [[ "$MERGEABLE" != "UNKNOWN" ]] && break
+            done
+            if [[ "$MERGEABLE" == "CONFLICTING" ]]; then
+              dequeue "$PR_NUMBER" "**Merge queue:** removed — PR has conflicts with \`${BASE}\`. Resolve and re-label \`${LABEL}\` to retry."
+              return 0
+            fi
           fi
 
           # --- 2. Rebase onto latest base branch ---
